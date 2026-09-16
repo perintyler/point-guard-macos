@@ -1,0 +1,18 @@
+name: point-guard-macos
+description: Point Guard on the desktop — the supervisor's book in a native window
+
+requires:
+  point-guard:
+    reason: the app is a client of the point-guard service, and ships no backend of its own
+
+apps:
+  PointGuardMac:
+    description: Read the book and steer the supervisor from the desktop
+    platform: macos
+    build:
+      command: app/build.sh
+      output: app/.build/PointGuard.app
+    bundle-id: com.barry.point-guard
+    # Not a login item: reading the book is occasional work, so the app opens on
+    # demand and quits with its window. Same posture as BarryActions.
+    login-item: false
