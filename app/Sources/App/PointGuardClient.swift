@@ -45,6 +45,11 @@ public actor PointGuardClient {
         try await get("book")
     }
 
+    /// `GET /debrief`. Throws `.notReady` when no tick has produced one yet.
+    public func fetchDebrief() async throws -> DebriefResponse {
+        try await get("debrief")
+    }
+
     public func fetchMessageHistory(limit: Int = 50) async throws -> MessageHistoryResponse {
         try await get("message/history", query: [URLQueryItem(name: "limit", value: String(limit))])
     }
@@ -84,10 +89,23 @@ public actor PointGuardClient {
     }
 
     private func validate(data: Data, response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let body = try? JSONDecoder().decode(PointGuardErrorBody.self, from: data)
-            throw PointGuardClientError.serverError(body?.error ?? "Request failed")
+        guard let http = response as? HTTPURLResponse else {
+            throw PointGuardClientError.serverError("Request failed")
         }
+        if (200...299).contains(http.statusCode) { return }
+
+        // 503 from point-guard is not a failure: it is "no supervisor tick has
+        // produced a debrief yet". The service returns it deliberately so that
+        // "just started" stays distinguishable from "there are no sessions" --
+        // flattening it into a generic error here would throw away exactly the
+        // distinction the status code exists to carry, and the UI would say
+        // "can't reach point-guard" about a service it just reached.
+        if http.statusCode == 503 {
+            throw PointGuardClientError.notReady
+        }
+
+        let body = try? JSONDecoder().decode(PointGuardErrorBody.self, from: data)
+        throw PointGuardClientError.serverError(body?.error ?? "Request failed")
     }
 }
 
@@ -100,9 +118,16 @@ private struct PointGuardErrorBody: Decodable {
 public enum PointGuardClientError: LocalizedError {
     case serverError(String)
 
+    /// The service answered, and said it has nothing yet. A separate case
+    /// from `serverError` because the remedy is "wait", not "check the
+    /// connection" -- and because a reader told "can't reach point-guard"
+    /// about a reachable service will go and debug the wrong thing.
+    case notReady
+
     public var errorDescription: String? {
         switch self {
         case .serverError(let message): return message
+        case .notReady: return "No debrief generated yet"
         }
     }
 }

@@ -8,6 +8,15 @@ import PointGuardCore
 @Observable
 public final class PointGuardState {
     public private(set) var book: LoadState<[BookSession]> = .idle
+
+    /// The debrief, polled on the same timer as the book.
+    public private(set) var debrief: LoadState<Debrief> = .idle
+
+    /// True when the service answered 503 -- it is up, and has not produced a
+    /// debrief yet. Kept apart from `debrief == .failed` so the view can say
+    /// "starting up" instead of "can't reach point-guard", which would send
+    /// the reader to debug a connection that is fine.
+    public private(set) var debriefNotReady = false
     public private(set) var history: LoadState<[MessageLogEntry]> = .idle
     public private(set) var sendState: LoadState<String> = .idle
 
@@ -26,6 +35,24 @@ public final class PointGuardState {
             book = .loaded(try await client.fetchBook().sessions)
         } catch {
             book = .failed(describePointGuardFailure(error))
+        }
+    }
+
+    public func loadDebrief() async {
+        // No `.loading` transition on refresh: the debrief is polled every 45s
+        // and flipping to a spinner each time would make a stable screen
+        // flicker. Only the first load shows one.
+        if case .idle = debrief { debrief = .loading }
+        do {
+            debrief = .loaded(try await client.fetchDebrief().debrief)
+            debriefNotReady = false
+        } catch PointGuardClientError.notReady {
+            // Not a failure: the service is up and has nothing yet.
+            debriefNotReady = true
+            if case .loaded = debrief {} else { debrief = .idle }
+        } catch {
+            debriefNotReady = false
+            debrief = .failed(describePointGuardFailure(error))
         }
     }
 
@@ -71,6 +98,7 @@ public final class PointGuardState {
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.loadBook()
+                await self.loadDebrief()
                 try? await Task.sleep(for: .seconds(45))
             }
         }
